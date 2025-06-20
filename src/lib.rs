@@ -8,6 +8,7 @@ use std::process::Command;
 use tempfile::TempDir;
 
 const BOT_API_URL: &str = "https://dev-bot-api.zapps.vn";
+const LONG_POLLING_TIMEOUT: u64 = 6 * 60 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
 pub enum QuestionType {
@@ -115,6 +116,12 @@ pub struct ZaloSendResult {
     pub date: u64,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ZaloSendMessageResponse {
+    pub ok: bool,
+    pub result: ZaloSendResult,
+}
+
 pub struct ZaloBot {
     pub bot_token: String,
     pub client: reqwest::Client,
@@ -162,15 +169,15 @@ impl ZaloBot {
         let url = format!("{}/bot{}/getUpdates", BOT_API_URL, self.bot_token);
 
         println!("🌐 Making API request to: {}", url);
-        println!("📤 Request payload: {{\"timeout\": 30}}");
+        println!("📤 Request payload: {{\"timeout\": {LONG_POLLING_TIMEOUT}}}");
 
         let response = self
             .client
             .post(&url)
             .json(&serde_json::json!({
-                "timeout": 30
+                "timeout": LONG_POLLING_TIMEOUT,
             }))
-            .timeout(std::time::Duration::from_secs(35)) // Slightly longer than server timeout
+            .timeout(std::time::Duration::from_secs(LONG_POLLING_TIMEOUT + 5)) // 24 hours + 5 seconds
             .send()
             .await?;
 
@@ -304,7 +311,7 @@ impl ZaloBot {
 
                             // Check if it's a timeout (normal for long polling) or a real error
                             if e.to_string().contains("timeout") {
-                                println!("🔄 Polling timeout, continuing...");
+                                println!("🔄 24-hour polling timeout, continuing...");
                             } else {
                                 println!("🔄 Error occurred, retrying in 5 seconds...");
                                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -331,64 +338,117 @@ impl ZaloBot {
         let chat_id = &message.chat.id;
         let sender_id = &message.sender.id;
 
+        let message_text = message.text.as_deref().unwrap_or("").trim().to_lowercase();
+
         println!(
-            "💬 Processing message from user: {} in chat: {}",
-            sender_id, chat_id
+            "💬 Processing message '{}' from user: {} in chat: {}",
+            message_text, sender_id, chat_id
         );
 
-        // Pick a random question
-        let selected_questions = pick_random_questions(database, question_type, 1);
+        // Parse message to determine question type
+        let requested_type = match message_text.as_str() {
+            "rc" | "reading comprehension" => Some(QuestionType::RC),
+            "sc" | "sentence correction" => Some(QuestionType::SC),
+            "cr" | "critical reasoning" => Some(QuestionType::CR),
+            "ps" | "problem solving" => Some(QuestionType::PS),
+            "ds" | "data sufficiency" => Some(QuestionType::DS),
+            _ => None,
+        };
 
-        if selected_questions.is_empty() {
-            eprintln!("⚠️  No questions available for the specified criteria");
-            return;
-        }
+        if let Some(q_type) = requested_type {
+            // User requested a specific question type
+            println!("🎯 User requested {} questions", q_type);
 
-        let (q_type, question_id) = &selected_questions[0];
-        println!("🎯 Selected question: {} ({})", question_id, q_type);
+            // Pick a random question of the requested type
+            let selected_questions = pick_random_questions(database, &Some(q_type), 1);
 
-        // Fetch question content
-        match fetch_question_content(question_id).await {
-            Ok(content) => {
-                // Generate image
-                match render_question_to_image(&content, q_type, output_dir).await {
-                    Ok(image_path) => {
-                        // Upload to Imgur and send
-                        let full_caption = format!(
-                            "{}\n\nQuestion ID: {} ({})\nFrom: {}",
-                            caption, content.id, q_type, content.src
-                        );
+            if selected_questions.is_empty() {
+                let error_msg = format!(
+                    "⚠️ Sorry, no {} questions are available at the moment. Please try another type.",
+                    q_type
+                );
+                if let Err(e) = self.send_message(chat_id, &error_msg).await {
+                    eprintln!("❌ Failed to send error message: {}", e);
+                }
+                return;
+            }
 
-                        match self
-                            .send_photo_from_file(
-                                chat_id,
-                                &image_path,
-                                &full_caption,
-                                github_config,
-                            )
-                            .await
-                        {
-                            Ok(()) => {
-                                println!(
-                                    "✅ Successfully sent question {} to user {}",
-                                    question_id, sender_id
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("❌ Failed to send photo to user {}: {}", sender_id, e);
+            let (selected_type, question_id) = &selected_questions[0];
+            println!("🎯 Selected question: {} ({})", question_id, selected_type);
+
+            // Fetch question content
+            match fetch_question_content(question_id).await {
+                Ok(content) => {
+                    // Generate image
+                    match render_question_to_image(&content, selected_type, output_dir).await {
+                        Ok(image_path) => {
+                            // Upload to GitHub and send
+                            let full_caption = format!(
+                                "{}\n\nQuestion ID: {} ({})\nFrom: {}",
+                                caption, content.id, selected_type, content.src
+                            );
+
+                            match self
+                                .send_photo_from_file(
+                                    chat_id,
+                                    &image_path,
+                                    &full_caption,
+                                    github_config,
+                                )
+                                .await
+                            {
+                                Ok(()) => {
+                                    println!(
+                                        "✅ Successfully sent {} question {} to user {}",
+                                        selected_type, question_id, sender_id
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "❌ Failed to send photo to user {}: {}",
+                                        sender_id, e
+                                    );
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "❌ Failed to generate image for question {}: {}",
-                            question_id, e
-                        );
+                        Err(e) => {
+                            eprintln!(
+                                "❌ Failed to generate image for question {}: {}",
+                                question_id, e
+                            );
+                        }
                     }
                 }
+                Err(e) => {
+                    eprintln!("❌ Failed to fetch question {}: {}", question_id, e);
+                }
             }
-            Err(e) => {
-                eprintln!("❌ Failed to fetch question {}: {}", question_id, e);
+        } else {
+            // User message doesn't match any question type, send help message
+            let help_message = format!(
+                "Hello! 👋 I'm your GMAT practice bot.\n\n\
+                To get a question, please send one of these types:\n\n\
+                📖 **RC** - Reading Comprehension\n\
+                ✏️ **SC** - Sentence Correction\n\
+                🧠 **CR** - Critical Reasoning\n\
+                🔢 **PS** - Problem Solving\n\
+                📊 **DS** - Data Sufficiency\n\n\
+                Just type the abbreviation (like 'PS' or 'ds') to get a random question of that type!"
+            );
+
+            match self.send_message(chat_id, &help_message).await {
+                Ok(()) => {
+                    println!(
+                        "💡 Sent help message to user {} (unrecognized input: '{}')",
+                        sender_id, message_text
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "❌ Failed to send help message to user {}: {}",
+                        sender_id, e
+                    );
+                }
             }
         }
     }
@@ -432,7 +492,6 @@ impl ZaloBot {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Upload to GitHub release first, then send the URL
         let github_url = upload_to_github_release(
-            &github_config.owner,
             &github_config.repo,
             github_config.release_id,
             &github_config.token,
@@ -440,6 +499,34 @@ impl ZaloBot {
         )
         .await?;
         self.send_photo(chat_id, &github_url, caption).await
+    }
+
+    pub async fn send_message(
+        &self,
+        chat_id: &str,
+        text: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let url = format!("{}/bot{}/sendMessage", BOT_API_URL, self.bot_token);
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": text
+            }))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(format!("Failed to send message: {} - {}", status, error_text).into());
+        }
+
+        let _result: ZaloSendMessageResponse = response.json().await?;
+        println!("  ✅ Message sent successfully to chat: {}", chat_id);
+        Ok(())
     }
 }
 
@@ -894,7 +981,6 @@ pub fn show_database_stats(database: &GmatDatabase) {
 
 #[derive(Debug)]
 pub struct GitHubConfig {
-    pub owner: String,
     pub repo: String,
     pub release_id: u64,
     pub token: String,
@@ -911,7 +997,6 @@ struct GitHubAssetResponse {
 }
 
 pub async fn create_github_release(
-    owner: &str,
     repo: &str,
     token: &str,
     tag_name: &str,
@@ -919,7 +1004,7 @@ pub async fn create_github_release(
     println!("  🏷️  Creating GitHub release with tag: {}", tag_name);
 
     let client = reqwest::Client::new();
-    let url = format!("https://api.github.com/repos/{}/{}/releases", owner, repo);
+    let url = format!("https://api.github.com/repos/{}/releases", repo);
 
     let release_data = serde_json::json!({
         "tag_name": tag_name,
@@ -954,17 +1039,13 @@ pub async fn create_github_release(
 }
 
 pub async fn get_latest_release_id(
-    owner: &str,
     repo: &str,
     token: &str,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     println!("  🔍 Getting latest release ID...");
 
     let client = reqwest::Client::new();
-    let url = format!(
-        "https://api.github.com/repos/{}/{}/releases/latest",
-        owner, repo
-    );
+    let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
 
     let response = client
         .get(&url)
@@ -990,7 +1071,6 @@ pub async fn get_latest_release_id(
 }
 
 pub async fn upload_to_github_release(
-    owner: &str,
     repo: &str,
     release_id: u64,
     token: &str,
@@ -1003,8 +1083,8 @@ pub async fn upload_to_github_release(
     // First, get the release info to obtain the upload_url
     println!("  🔍 Getting release upload URL...");
     let release_url = format!(
-        "https://api.github.com/repos/{}/{}/releases/{}",
-        owner, repo, release_id
+        "https://api.github.com/repos/{}/releases/{}",
+        repo, release_id
     );
 
     let release_response = client
@@ -1023,8 +1103,8 @@ pub async fn upload_to_github_release(
             return Err(format!(
                 "Release not found. Please create a release first or use --github-release-id with a valid release ID.\n\
                 You can create a release manually on GitHub or the bot can auto-create one.\n\
-                Repository: {}/{}, Release ID: {}",
-                owner, repo, release_id
+                Repository: {}, Release ID: {}",
+                repo, release_id
             ).into());
         }
 

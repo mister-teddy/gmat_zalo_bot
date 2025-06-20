@@ -44,11 +44,7 @@ struct Args {
     #[arg(long, default_value = "Here's your GMAT question! 📚")]
     caption: String,
 
-    /// GitHub repository owner (can also be set via GITHUB_OWNER environment variable)
-    #[arg(long)]
-    github_owner: Option<String>,
-
-    /// GitHub repository name (can also be set via GITHUB_REPO environment variable)
+    /// GitHub repository name (can also be set via GITHUB_REPOSITORY environment variable)
     #[arg(long)]
     github_repo: Option<String>,
 
@@ -182,15 +178,9 @@ async fn main() {
             }
         };
 
-        // Setup GitHub configuration
-        let github_owner = args
-            .github_owner
-            .or_else(|| env::var("GITHUB_OWNER").ok())
-            .unwrap_or_else(|| "your-username".to_string());
-
         let github_repo = args
             .github_repo
-            .or_else(|| env::var("GITHUB_REPO").ok())
+            .or_else(|| env::var("GITHUB_REPOSITORY").ok())
             .unwrap_or_else(|| "gmat-bot-images".to_string());
 
         let github_token = args
@@ -210,14 +200,7 @@ async fn main() {
         // Determine release ID
         let release_id = if args.create_release {
             println!("🏷️  Creating new GitHub release...");
-            match create_github_release(
-                &github_owner,
-                &github_repo,
-                &github_token,
-                &args.release_tag,
-            )
-            .await
-            {
+            match create_github_release(&github_repo, &github_token, &args.release_tag).await {
                 Ok(id) => {
                     println!("✅ Created new release with ID: {}", id);
                     id
@@ -229,7 +212,7 @@ async fn main() {
             }
         } else if args.use_latest_release {
             println!("🔍 Getting latest release...");
-            match get_latest_release_id(&github_owner, &github_repo, &github_token).await {
+            match get_latest_release_id(&github_repo, &github_token).await {
                 Ok(id) => {
                     println!("✅ Using latest release ID: {}", id);
                     id
@@ -258,7 +241,6 @@ async fn main() {
         };
 
         let github_config = GitHubConfig {
-            owner: github_owner,
             repo: github_repo,
             release_id,
             token: github_token,
@@ -365,8 +347,7 @@ async fn main() {
     println!("🔧 Setup:");
     println!("  export ZALO_BOT_TOKEN=your_bot_token_here");
     println!("  export GITHUB_TOKEN=your_github_token_here  # Needs 'repo' scope");
-    println!("  export GITHUB_OWNER=your_github_username");
-    println!("  export GITHUB_REPO=your_repo_name");
+    println!("  export GITHUB_REPOSITORY=your_repo_name");
     println!();
     println!("📦 GitHub Release Options:");
     println!("  cargo run -- --bot-service --create-release --release-tag v1.0.0");
