@@ -43,6 +43,34 @@ struct Args {
     /// Custom caption for Zalo messages
     #[arg(long, default_value = "Here's your GMAT question! 📚")]
     caption: String,
+
+    /// GitHub repository owner (can also be set via GITHUB_OWNER environment variable)
+    #[arg(long)]
+    github_owner: Option<String>,
+
+    /// GitHub repository name (can also be set via GITHUB_REPO environment variable)
+    #[arg(long)]
+    github_repo: Option<String>,
+
+    /// GitHub release ID (can also be set via GITHUB_RELEASE_ID environment variable)
+    #[arg(long)]
+    github_release_id: Option<u64>,
+
+    /// GitHub token (can also be set via GITHUB_TOKEN environment variable)
+    #[arg(long)]
+    github_token: Option<String>,
+
+    /// Create a new GitHub release automatically
+    #[arg(long)]
+    create_release: bool,
+
+    /// Use latest GitHub release (overrides --github-release-id)
+    #[arg(long)]
+    use_latest_release: bool,
+
+    /// GitHub release tag name (used when creating new release)
+    #[arg(long, default_value = "v1.0.0")]
+    release_tag: String,
 }
 
 #[tokio::main]
@@ -154,6 +182,88 @@ async fn main() {
             }
         };
 
+        // Setup GitHub configuration
+        let github_owner = args
+            .github_owner
+            .or_else(|| env::var("GITHUB_OWNER").ok())
+            .unwrap_or_else(|| "your-username".to_string());
+
+        let github_repo = args
+            .github_repo
+            .or_else(|| env::var("GITHUB_REPO").ok())
+            .unwrap_or_else(|| "gmat-bot-images".to_string());
+
+        let github_token = args
+            .github_token
+            .or_else(|| env::var("GITHUB_TOKEN").ok())
+            .unwrap_or_default();
+
+        if github_token.is_empty() {
+            eprintln!(
+                "❌ GitHub token required for image upload. Set GITHUB_TOKEN environment variable or use --github-token"
+            );
+            eprintln!("💡 Example: export GITHUB_TOKEN=your_github_token_here");
+            eprintln!("💡 Token needs 'repo' scope to upload release assets");
+            std::process::exit(1);
+        }
+
+        // Determine release ID
+        let release_id = if args.create_release {
+            println!("🏷️  Creating new GitHub release...");
+            match create_github_release(
+                &github_owner,
+                &github_repo,
+                &github_token,
+                &args.release_tag,
+            )
+            .await
+            {
+                Ok(id) => {
+                    println!("✅ Created new release with ID: {}", id);
+                    id
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to create release: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        } else if args.use_latest_release {
+            println!("🔍 Getting latest release...");
+            match get_latest_release_id(&github_owner, &github_repo, &github_token).await {
+                Ok(id) => {
+                    println!("✅ Using latest release ID: {}", id);
+                    id
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to get latest release: {}", e);
+                    eprintln!("💡 Try using --create-release to create a new release");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            args.github_release_id
+                .or_else(|| {
+                    env::var("GITHUB_RELEASE_ID")
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                })
+                .unwrap_or_else(|| {
+                    eprintln!("❌ GitHub release ID required. Use one of:");
+                    eprintln!("  --github-release-id <ID>");
+                    eprintln!("  --use-latest-release");
+                    eprintln!("  --create-release");
+                    eprintln!("  export GITHUB_RELEASE_ID=<ID>");
+                    std::process::exit(1);
+                })
+        };
+
+        let github_config = GitHubConfig {
+            owner: github_owner,
+            repo: github_repo,
+            release_id,
+            token: github_token,
+        };
+
         println!("\n🤖 Initializing Zalo Bot...");
         let zalo_bot = ZaloBot::new(bot_token);
 
@@ -166,6 +276,7 @@ async fn main() {
                     &args.question_type,
                     &args.output_dir,
                     &args.caption,
+                    &github_config,
                 )
                 .await
             {
@@ -206,32 +317,22 @@ async fn main() {
                             content.id, question_type
                         );
 
-                        match encode_image_to_base64(image_path) {
-                            Ok(base64_data_url) => {
-                                let caption = format!(
-                                    "{}\n\nQuestion ID: {} ({})",
-                                    args.caption, content.id, question_type
-                                );
+                        let caption = format!(
+                            "{}\n\nQuestion ID: {} ({})",
+                            args.caption, content.id, question_type
+                        );
 
-                                for chat_id in &chat_ids {
-                                    match zalo_bot
-                                        .send_photo_base64(chat_id, &base64_data_url, &caption)
-                                        .await
-                                    {
-                                        Ok(()) => {
-                                            println!("  ✅ Sent to chat: {}", chat_id);
-                                        }
-                                        Err(e) => {
-                                            eprintln!(
-                                                "  ❌ Failed to send to chat {}: {}",
-                                                chat_id, e
-                                            );
-                                        }
-                                    }
+                        for chat_id in &chat_ids {
+                            match zalo_bot
+                                .send_photo_from_file(chat_id, image_path, &caption, &github_config)
+                                .await
+                            {
+                                Ok(()) => {
+                                    println!("  ✅ Sent to chat: {}", chat_id);
                                 }
-                            }
-                            Err(e) => {
-                                eprintln!("  ❌ Failed to encode image: {}", e);
+                                Err(e) => {
+                                    eprintln!("  ❌ Failed to send to chat {}: {}", chat_id, e);
+                                }
                             }
                         }
                     }
@@ -261,5 +362,16 @@ async fn main() {
     println!("  # Start service with custom caption");
     println!("  cargo run -- --bot-service --caption \"Daily GMAT practice! 📚\"");
     println!();
-    println!("🔧 Setup: Set your bot token with: export ZALO_BOT_TOKEN=your_token_here");
+    println!("🔧 Setup:");
+    println!("  export ZALO_BOT_TOKEN=your_bot_token_here");
+    println!("  export GITHUB_TOKEN=your_github_token_here  # Needs 'repo' scope");
+    println!("  export GITHUB_OWNER=your_github_username");
+    println!("  export GITHUB_REPO=your_repo_name");
+    println!();
+    println!("📦 GitHub Release Options:");
+    println!("  cargo run -- --bot-service --create-release --release-tag v1.0.0");
+    println!("  cargo run -- --bot-service --use-latest-release");
+    println!("  cargo run -- --bot-service --github-release-id 123456");
+    println!();
+    println!("💡 The bot uploads question images to GitHub releases for hosting");
 }

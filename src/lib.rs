@@ -1,4 +1,3 @@
-use base64::{Engine as _, engine::general_purpose};
 use clap::ValueEnum;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
@@ -7,6 +6,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
+
+const BOT_API_URL: &str = "https://dev-bot-api.zapps.vn";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
 pub enum QuestionType {
@@ -158,7 +159,7 @@ impl ZaloBot {
     }
 
     pub async fn get_updates(&self) -> Result<Vec<ZaloMessage>, Box<dyn std::error::Error>> {
-        let url = format!("https://bot-api.zapps.vn/bot{}/getUpdates", self.bot_token);
+        let url = format!("{}/bot{}/getUpdates", BOT_API_URL, self.bot_token);
 
         println!("🌐 Making API request to: {}", url);
         println!("📤 Request payload: {{\"timeout\": 30}}");
@@ -262,6 +263,7 @@ impl ZaloBot {
         question_type: &Option<QuestionType>,
         output_dir: &str,
         caption: &str,
+        github_config: &GitHubConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("🔄 Starting long polling service...");
         println!("📱 Bot is now listening for messages. Send any message to get a GMAT question!");
@@ -289,6 +291,7 @@ impl ZaloBot {
                                         question_type,
                                         output_dir,
                                         caption,
+                                        github_config,
                                     )
                                     .await;
                                 }
@@ -323,6 +326,7 @@ impl ZaloBot {
         question_type: &Option<QuestionType>,
         output_dir: &str,
         caption: &str,
+        github_config: &GitHubConfig,
     ) {
         let chat_id = &message.chat.id;
         let sender_id = &message.sender.id;
@@ -349,34 +353,29 @@ impl ZaloBot {
                 // Generate image
                 match render_question_to_image(&content, q_type, output_dir).await {
                     Ok(image_path) => {
-                        // Encode to base64 and send
-                        match encode_image_to_base64(&image_path) {
-                            Ok(base64_data_url) => {
-                                let full_caption = format!(
-                                    "{}\n\nQuestion ID: {} ({})\nFrom: {}",
-                                    caption, content.id, q_type, content.src
-                                );
+                        // Upload to Imgur and send
+                        let full_caption = format!(
+                            "{}\n\nQuestion ID: {} ({})\nFrom: {}",
+                            caption, content.id, q_type, content.src
+                        );
 
-                                match self
-                                    .send_photo_base64(chat_id, &base64_data_url, &full_caption)
-                                    .await
-                                {
-                                    Ok(()) => {
-                                        println!(
-                                            "✅ Successfully sent question {} to user {}",
-                                            question_id, sender_id
-                                        );
-                                    }
-                                    Err(e) => {
-                                        eprintln!(
-                                            "❌ Failed to send photo to user {}: {}",
-                                            sender_id, e
-                                        );
-                                    }
-                                }
+                        match self
+                            .send_photo_from_file(
+                                chat_id,
+                                &image_path,
+                                &full_caption,
+                                github_config,
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                println!(
+                                    "✅ Successfully sent question {} to user {}",
+                                    question_id, sender_id
+                                );
                             }
                             Err(e) => {
-                                eprintln!("❌ Failed to encode image: {}", e);
+                                eprintln!("❌ Failed to send photo to user {}: {}", sender_id, e);
                             }
                         }
                     }
@@ -400,7 +399,7 @@ impl ZaloBot {
         photo_url: &str,
         caption: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let url = format!("https://bot-api.zapps.vn/bot{}/sendPhoto", self.bot_token);
+        let url = format!("{}/bot{}/sendPhoto", BOT_API_URL, self.bot_token);
 
         let response = self
             .client
@@ -424,14 +423,23 @@ impl ZaloBot {
         Ok(())
     }
 
-    pub async fn send_photo_base64(
+    pub async fn send_photo_from_file(
         &self,
         chat_id: &str,
-        base64_data_url: &str,
+        image_path: &str,
         caption: &str,
+        github_config: &GitHubConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Use the same send_photo method but with base64 data URL
-        self.send_photo(chat_id, base64_data_url, caption).await
+        // Upload to GitHub release first, then send the URL
+        let github_url = upload_to_github_release(
+            &github_config.owner,
+            &github_config.repo,
+            github_config.release_id,
+            &github_config.token,
+            image_path,
+        )
+        .await?;
+        self.send_photo(chat_id, &github_url, caption).await
     }
 }
 
@@ -828,11 +836,13 @@ pub async fn render_question_to_image(
 
     // Run wkhtmltoimage command
     let output = Command::new("wkhtmltoimage")
+        .arg("--format")
+        .arg("jpg")
         .arg("--width")
         .arg("1200")
         .arg("--disable-smart-width")
         .arg("--quality")
-        .arg("100")
+        .arg("70")
         .arg(html_path.to_str().unwrap())
         .arg(&output_path)
         .output()?;
@@ -882,16 +892,210 @@ pub fn show_database_stats(database: &GmatDatabase) {
     println!();
 }
 
-pub fn encode_image_to_base64(image_path: &str) -> Result<String, Box<dyn std::error::Error>> {
-    println!("  📄 Encoding image to base64...");
+#[derive(Debug)]
+pub struct GitHubConfig {
+    pub owner: String,
+    pub repo: String,
+    pub release_id: u64,
+    pub token: String,
+}
 
+#[derive(Debug, Deserialize)]
+struct GitHubReleaseResponse {
+    upload_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubAssetResponse {
+    browser_download_url: String,
+}
+
+pub async fn create_github_release(
+    owner: &str,
+    repo: &str,
+    token: &str,
+    tag_name: &str,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    println!("  🏷️  Creating GitHub release with tag: {}", tag_name);
+
+    let client = reqwest::Client::new();
+    let url = format!("https://api.github.com/repos/{}/{}/releases", owner, repo);
+
+    let release_data = serde_json::json!({
+        "tag_name": tag_name,
+        "name": format!("GMAT Bot Images - {}", tag_name),
+        "body": "Automated release for GMAT question images",
+        "draft": false,
+        "prerelease": false
+    });
+
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("token {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "gmat-zalo-bot")
+        .json(&release_data)
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Failed to create release: {} - {}", status, error_text).into());
+    }
+
+    let release_response: serde_json::Value = response.json().await?;
+    let release_id = release_response["id"]
+        .as_u64()
+        .ok_or("Failed to get release ID from response")?;
+
+    println!("  ✅ Created release with ID: {}", release_id);
+    Ok(release_id)
+}
+
+pub async fn get_latest_release_id(
+    owner: &str,
+    repo: &str,
+    token: &str,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    println!("  🔍 Getting latest release ID...");
+
+    let client = reqwest::Client::new();
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases/latest",
+        owner, repo
+    );
+
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("token {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "gmat-zalo-bot")
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Failed to get latest release: {} - {}", status, error_text).into());
+    }
+
+    let release_response: serde_json::Value = response.json().await?;
+    let release_id = release_response["id"]
+        .as_u64()
+        .ok_or("Failed to get release ID from response")?;
+
+    println!("  ✅ Found latest release ID: {}", release_id);
+    Ok(release_id)
+}
+
+pub async fn upload_to_github_release(
+    owner: &str,
+    repo: &str,
+    release_id: u64,
+    token: &str,
+    image_path: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    println!("  📤 Uploading image to GitHub release...");
+
+    let client = reqwest::Client::new();
+
+    // First, get the release info to obtain the upload_url
+    println!("  🔍 Getting release upload URL...");
+    let release_url = format!(
+        "https://api.github.com/repos/{}/{}/releases/{}",
+        owner, repo, release_id
+    );
+
+    let release_response = client
+        .get(&release_url)
+        .header("Authorization", format!("token {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "gmat-zalo-bot")
+        .send()
+        .await?;
+
+    if !release_response.status().is_success() {
+        let status = release_response.status();
+        let error_text = release_response.text().await.unwrap_or_default();
+
+        if status == 404 {
+            return Err(format!(
+                "Release not found. Please create a release first or use --github-release-id with a valid release ID.\n\
+                You can create a release manually on GitHub or the bot can auto-create one.\n\
+                Repository: {}/{}, Release ID: {}",
+                owner, repo, release_id
+            ).into());
+        }
+
+        return Err(format!("Failed to get release info: {} - {}", status, error_text).into());
+    }
+
+    let release_info: GitHubReleaseResponse = release_response.json().await?;
+
+    // Extract the base upload URL (remove the {?name,label} template part)
+    let upload_url = release_info
+        .upload_url
+        .split('{')
+        .next()
+        .unwrap_or(&release_info.upload_url);
+
+    // Read the image file
     let file_bytes = fs::read(image_path)?;
-    let base64_string = general_purpose::STANDARD.encode(&file_bytes);
-    let data_url = format!("data:image/png;base64,{}", base64_string);
+    println!("  📏 Image size: {} bytes", file_bytes.len());
+
+    // Generate unique filename based on timestamp and question ID
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let path = Path::new(image_path);
+    let base_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("question");
+    let file_name = format!("{}__{}.png", base_name, timestamp);
+
+    // Upload the asset using the upload_url
+    let upload_url_with_name = format!("{}?name={}", upload_url, file_name);
+    println!("  📤 Uploading {} to GitHub...", file_name);
+
+    let response = client
+        .post(&upload_url_with_name)
+        .header("Authorization", format!("token {}", token))
+        .header("Content-Type", "image/png")
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "gmat-zalo-bot")
+        .body(file_bytes)
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+
+        if status == 422 {
+            return Err(format!(
+                "Asset upload failed - likely due to duplicate filename: {}\n\
+                GitHub returns 422 when an asset with the same name already exists.\n\
+                Error details: {}",
+                file_name, error_text
+            )
+            .into());
+        }
+
+        return Err(format!(
+            "GitHub upload failed: {} - {}\n\
+            Make sure your GitHub token has the 'repo' scope and write access to the repository.",
+            status, error_text
+        )
+        .into());
+    }
+
+    let github_response: GitHubAssetResponse = response.json().await?;
 
     println!(
-        "  ✅ Image encoded to base64 (size: {} bytes)",
-        file_bytes.len()
+        "  ✅ Image uploaded to GitHub: {}",
+        github_response.browser_download_url
     );
-    Ok(data_url)
+    Ok(github_response.browser_download_url)
 }
