@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
-const BOT_API_URL: &str = "https://bot.zapps.me";
+const BOT_API_URL: &str = "https://bot-api.zapps.me";
 const LONG_POLLING_TIMEOUT: u64 = 6 * 60 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
