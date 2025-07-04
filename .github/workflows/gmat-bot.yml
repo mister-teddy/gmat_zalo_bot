@@ -3,7 +3,7 @@ name: GMAT Zalo Bot Runner
 on:
   schedule:
     # Run every 6 hours
-    - cron: '0 */6 * * *'
+    - cron: "0 */6 * * *"
   workflow_dispatch: # Allow manual triggering
 
 env:
@@ -15,79 +15,79 @@ jobs:
     timeout-minutes: 1500 # 25 hours to allow for 24-hour polling + overhead
 
     steps:
-    - name: Verify environment variables
-      run: |
-        echo "Checking required environment variables..."
-        if [ -z "$ZALO_BOT_TOKEN" ]; then
-          echo "❌ ZALO_BOT_TOKEN is not set"
-          exit 1
-        fi
-        if [ -z "$GITHUB_TOKEN" ]; then
-          echo "❌ GITHUB_TOKEN is not set"
-          exit 1
-        fi
-        echo "✅ Using repository: $GITHUB_REPOSITORY"
-        echo "✅ All required environment variables are set"
-      env:
-        ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify environment variables
+        run: |
+          echo "Checking required environment variables..."
+          if [ -z "$ZALO_BOT_TOKEN" ]; then
+            echo "❌ ZALO_BOT_TOKEN is not set"
+            exit 1
+          fi
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "❌ GITHUB_TOKEN is not set"
+            exit 1
+          fi
+          echo "✅ Using repository: $GITHUB_REPOSITORY"
+          echo "✅ All required environment variables are set"
+        env:
+          ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache Cargo dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-    - name: Install wkhtmltopdf
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y wkhtmltopdf
-        wkhtmltoimage --version
+      - name: Install wkhtmltopdf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wkhtmltopdf
+          wkhtmltoimage --version
 
-    - name: Build bot
-      run: cargo build --release
+      - name: Build bot
+        run: cargo build --release
 
-    - name: Run GMAT Bot Service
-      run: |
-        echo "🚀 Starting GMAT Zalo Bot service..."
-        echo "Bot will run for 24 hours and respond to user messages"
-        echo "Repository: $GITHUB_REPOSITORY"
-        timeout 86400 ./target/release/gmat_zalo_bot --bot-service --use-latest-release || true
-        echo "✅ Bot service completed (24 hours or stopped)"
-      env:
-        ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GITHUB_RELEASE_ID: ${{ secrets.GITHUB_RELEASE_ID }}
-        RUST_LOG: info
+      - name: Run GMAT Bot Service
+        run: |
+          echo "🚀 Starting GMAT Zalo Bot service..."
+          echo "Bot will run for 24 hours and respond to user messages"
+          echo "Repository: $GITHUB_REPOSITORY"
+          ./target/release/gmat_zalo_bot --bot-service --use-latest-release || true
+          echo "✅ Bot service completed (24 hours or stopped)"
+        env:
+          ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_RELEASE_ID: ${{ secrets.GITHUB_RELEASE_ID }}
+          RUST_LOG: info
 
-    - name: Cleanup artifacts
-      if: always()
-      run: |
-        echo "🧹 Cleaning up temporary files..."
-        rm -rf output/
-        rm -rf target/debug/
-        echo "✅ Cleanup completed"
+      - name: Cleanup artifacts
+        if: always()
+        run: |
+          echo "🧹 Cleaning up temporary files..."
+          rm -rf output/
+          rm -rf target/debug/
+          echo "✅ Cleanup completed"
 
-    - name: Bot Status Summary
-      if: always()
-      run: |
-        echo "📊 GMAT Bot Daily Run Summary"
-        echo "================================"
-        echo "Date: $(date)"
-        echo "Job Status: ${{ job.status }}"
-        echo "Runner: ${{ runner.os }}"
-        echo "Repository: ${{ github.repository }}"
-        echo "✅ Daily bot execution completed"
+      - name: Bot Status Summary
+        if: always()
+        run: |
+          echo "📊 GMAT Bot Daily Run Summary"
+          echo "================================"
+          echo "Date: $(date)"
+          echo "Job Status: ${{ job.status }}"
+          echo "Runner: ${{ runner.os }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "✅ Daily bot execution completed"

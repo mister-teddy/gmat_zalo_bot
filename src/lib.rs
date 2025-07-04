@@ -63,6 +63,7 @@ pub struct QuestionContent {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ZaloMessage {
+    #[serde(rename = "from")]
     pub sender: ZaloSender,
     pub chat: ZaloChat,
     pub text: Option<String>,
@@ -76,6 +77,7 @@ pub struct ZaloMessage {
 pub struct ZaloSender {
     pub id: String,
     pub is_bot: bool,
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
