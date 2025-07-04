@@ -67,7 +67,7 @@ pub struct ZaloMessage {
     pub sender: ZaloSender,
     pub chat: ZaloChat,
     pub text: Option<String>,
-    pub photo_url: Option<String>,
+    pub photo: Option<String>,
     pub caption: Option<String>,
     pub message_id: String,
     pub date: u64,
@@ -494,7 +494,7 @@ impl ZaloBot {
     pub async fn send_photo(
         &self,
         chat_id: &str,
-        photo_url: &str,
+        photo: &str,
         caption: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let url = format!("{}/bot{}/sendPhoto", BOT_API_URL, self.bot_token);
@@ -504,7 +504,7 @@ impl ZaloBot {
             .post(&url)
             .json(&serde_json::json!({
                 "chat_id": chat_id,
-                "photo_url": photo_url,
+                "photo": photo,
                 "caption": caption
             }))
             .send()
@@ -519,7 +519,6 @@ impl ZaloBot {
 
         // Log the raw response for debugging
         println!("🔍 sendPhoto raw response: {}", text);
-
         // Try to parse only if ok: true
         let json: serde_json::Value = serde_json::from_str(&text)?;
         if json.get("ok") == Some(&serde_json::Value::Bool(true)) {
@@ -532,7 +531,13 @@ impl ZaloBot {
                 Err("Photo sent but no result field in response".into())
             }
         } else {
-            Err(format!("Failed to send photo: {}", text).into())
+            // Remove duplicated "Failed to send photo:" in error message
+            let err_msg = if let Some(desc) = json.get("description").and_then(|d| d.as_str()) {
+                format!("Failed to send photo: {}", desc)
+            } else {
+                text
+            };
+            Err(err_msg.into())
         }
     }
 
