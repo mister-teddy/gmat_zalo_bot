@@ -12,6 +12,8 @@ env:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 1500 # 25 hours to allow for 24-hour polling + overhead
 
     steps:
@@ -70,7 +72,6 @@ jobs:
         env:
           ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_RELEASE_ID: ${{ secrets.GITHUB_RELEASE_ID }}
           RUST_LOG: info
 
       - name: Cleanup artifacts

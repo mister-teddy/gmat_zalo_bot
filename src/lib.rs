@@ -361,76 +361,112 @@ impl ZaloBot {
             // User requested a specific question type
             println!("🎯 User requested {} questions", q_type);
 
-            // Pick a random question of the requested type
-            let selected_questions = pick_random_questions(database, &Some(q_type), 1);
-
-            if selected_questions.is_empty() {
-                let error_msg = format!(
-                    "⚠️ Sorry, no {} questions are available at the moment. Please try another type.",
-                    q_type
-                );
-                if let Err(e) = self.send_message(chat_id, &error_msg).await {
-                    eprintln!("❌ Failed to send error message: {}", e);
-                }
-                return;
+            // Inform user that the bot is processing the request
+            if let Err(e) = self
+                .send_message(chat_id, "⏳ Processing your request, please wait...")
+                .await
+            {
+                eprintln!("❌ Failed to send processing message: {}", e);
             }
 
-            let (selected_type, question_id) = &selected_questions[0];
-            println!("🎯 Selected question: {} ({})", question_id, selected_type);
+            // Pick a random question of the requested type
+            let mut attempts = 0;
+            let max_attempts = 3;
+            let mut last_error = None;
 
-            // Fetch question content
-            match fetch_question_content(question_id).await {
-                Ok(content) => {
-                    // Generate image
-                    match render_question_to_image(&content, selected_type, output_dir).await {
-                        Ok(image_path) => {
-                            // Upload to GitHub and send
-                            let full_caption = format!(
-                                "{}\n\nQuestion ID: {} ({})\nFrom: {}",
-                                caption, content.id, selected_type, content.src
-                            );
+            while attempts < max_attempts {
+                let selected_questions = pick_random_questions(database, &Some(q_type), 1);
 
-                            match self
-                                .send_photo_from_file(
-                                    chat_id,
-                                    &image_path,
-                                    &full_caption,
-                                    github_config,
-                                )
-                                .await
-                            {
-                                Ok(()) => {
-                                    println!(
-                                        "✅ Successfully sent {} question {} to user {}",
-                                        selected_type, question_id, sender_id
-                                    );
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "❌ Failed to send photo to user {}: {}",
-                                        sender_id, e
-                                    );
+                if selected_questions.is_empty() {
+                    let error_msg = format!(
+                        "⚠️ Sorry, no {} questions are available at the moment. Please try another type.",
+                        q_type
+                    );
+                    if let Err(e) = self.send_message(chat_id, &error_msg).await {
+                        eprintln!("❌ Failed to send error message: {}", e);
+                    }
+                    return;
+                }
+
+                let (selected_type, question_id) = &selected_questions[0];
+                println!("🎯 Selected question: {} ({})", question_id, selected_type);
+
+                // Fetch question content
+                match fetch_question_content(question_id).await {
+                    Ok(content) => {
+                        // Generate image
+                        match render_question_to_image(&content, selected_type, output_dir).await {
+                            Ok(image_path) => {
+                                // Upload to GitHub and send
+                                let full_caption = format!(
+                                    "{}\n\nQuestion ID: {} ({})\nFrom: {}",
+                                    caption, content.id, selected_type, content.src
+                                );
+
+                                match self
+                                    .send_photo_from_file(
+                                        chat_id,
+                                        &image_path,
+                                        &full_caption,
+                                        github_config,
+                                    )
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        println!(
+                                            "✅ Successfully sent {} question {} to user {}",
+                                            selected_type, question_id, sender_id
+                                        );
+                                        return;
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "❌ Failed to send photo to user {}: {}",
+                                            sender_id, e
+                                        );
+                                        last_error = Some(format!("Failed to send photo: {}", e));
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "❌ Failed to generate image for question {}: {}",
-                                question_id, e
-                            );
+                            Err(e) => {
+                                eprintln!(
+                                    "❌ Failed to generate image for question {}: {}",
+                                    question_id, e
+                                );
+                                last_error = Some(format!("Failed to generate image: {}", e));
+                                attempts += 1;
+                                println!(
+                                    "🔄 Retrying with another question (attempt {}/{})...",
+                                    attempts + 1,
+                                    max_attempts
+                                );
+                                continue;
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    eprintln!("❌ Failed to fetch question {}: {}", question_id, e);
+                    Err(e) => {
+                        eprintln!("❌ Failed to fetch question {}: {}", question_id, e);
+                        last_error = Some(format!("Failed to fetch question: {}", e));
+                        break;
+                    }
                 }
             }
+
+            // If we reach here, all attempts failed
+            let error_msg = last_error.unwrap_or_else(|| {
+                "⚠️ Sorry, something went wrong and your request could not be processed."
+                    .to_string()
+            });
+            if let Err(e) = self.send_message(chat_id, &error_msg).await {
+                eprintln!("❌ Failed to send error message: {}", e);
+            }
+            return;
         } else {
             // User message doesn't match any question type, send help message
             let help_message = format!(
                 "Hello! 👋 I'm your GMAT practice bot.\n\n\
                 To get a question, please send one of these types:\n\n\
-                📖 **RC** - Reading Comprehension\n\
                 ✏️ **SC** - Sentence Correction\n\
                 🧠 **CR** - Critical Reasoning\n\
                 🔢 **PS** - Problem Solving\n\
