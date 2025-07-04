@@ -510,15 +510,30 @@ impl ZaloBot {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(format!("Failed to send photo: {} - {}", status, error_text).into());
+        let status = response.status();
+        let text = response.text().await?;
+
+        if !status.is_success() {
+            return Err(format!("Failed to send photo: {} - {}", status, text).into());
         }
 
-        let _result: ZaloSendPhotoResponse = response.json().await?;
-        println!("  ✅ Photo sent successfully to chat: {}", chat_id);
-        Ok(())
+        // Log the raw response for debugging
+        println!("🔍 sendPhoto raw response: {}", text);
+
+        // Try to parse only if ok: true
+        let json: serde_json::Value = serde_json::from_str(&text)?;
+        if json.get("ok") == Some(&serde_json::Value::Bool(true)) {
+            // Only try to parse result if present
+            if json.get("result").is_some() {
+                let _result: ZaloSendPhotoResponse = serde_json::from_value(json)?;
+                println!("  ✅ Photo sent successfully to chat: {}", chat_id);
+                Ok(())
+            } else {
+                Err("Photo sent but no result field in response".into())
+            }
+        } else {
+            Err(format!("Failed to send photo: {}", text).into())
+        }
     }
 
     pub async fn send_photo_from_file(
