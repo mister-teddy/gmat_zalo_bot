@@ -31,8 +31,8 @@ jobs:
           echo "✅ Using repository: $GITHUB_REPOSITORY"
           echo "✅ All required environment variables are set"
         env:
-          ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN }}
 
       - name: Checkout repository
         uses: actions/checkout@v4

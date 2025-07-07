@@ -1,0 +1,58 @@
+name: Daily GMAT Questions
+
+on:
+  schedule:
+    # Run every day at 9:00 AM
+    - cron: "0 2 * * *" # 9:00 AM UTC+7 is 2:00 AM UTC
+  workflow_dispatch: # Allow manual triggering
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  send-daily-questions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install wkhtmltopdf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wkhtmltopdf
+          wkhtmltoimage --version
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Send daily questions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZALO_BOT_TOKEN: ${{ secrets.ZALO_BOT_TOKEN }}
+          USER_IDS: ${{ secrets.DAILY_QUESTION_USERS }}
+        run: |
+          if [ -z "$USER_IDS" ]; then
+            echo " Please put user IDs in DAILY_QUESTION_USERS secret."
+            exit 1
+          fi
+
+          echo "Sending question to users: $USER_IDS"
+          ./target/release/gmat_zalo_bot --use-latest-release --daily-question --user-ids "$USER_IDS"

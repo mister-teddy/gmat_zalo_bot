@@ -1,6 +1,136 @@
 use clap::Parser;
 use gmat_zalo_bot::*;
 use std::env;
+use std::path::PathBuf;
+use std::time::Duration;
+
+/// Helper function to create GitHub configuration from command line arguments
+async fn setup_github_config(args: &Args) -> Result<GitHubConfig, Box<dyn std::error::Error>> {
+    let github_repo = args
+        .github_repo
+        .clone()
+        .or_else(|| env::var("GITHUB_REPOSITORY").ok())
+        .unwrap_or_else(|| "gmat-bot-images".to_string());
+
+    let github_token = args
+        .github_token
+        .clone()
+        .or_else(|| env::var("GITHUB_TOKEN").ok())
+        .ok_or(
+            "GitHub token is required. Set GITHUB_TOKEN environment variable or use --github-token",
+        )?;
+
+    let release_id = if args.create_release {
+        println!("🏷️  Creating new GitHub release...");
+        create_github_release(&github_repo, &github_token, &args.release_tag).await?
+    } else if args.use_latest_release {
+        println!("🔍 Getting latest release...");
+        get_latest_release_id(&github_repo, &github_token).await?
+    } else {
+        args.github_release_id
+            .or_else(|| env::var("GITHUB_RELEASE_ID").ok().and_then(|s| s.parse().ok()))
+            .ok_or("GitHub release ID is required. Use --github-release-id, --use-latest-release, or --create-release")?
+    };
+
+    Ok(GitHubConfig {
+        repo: github_repo,
+        release_id,
+        token: github_token,
+    })
+}
+
+/// Process questions and generate images if needed
+async fn process_questions(
+    questions: Vec<(QuestionType, String)>,
+    output_dir: &str,
+    generate_images: bool,
+) -> Vec<(PathBuf, QuestionContent, QuestionType)> {
+    let mut results = Vec::new();
+
+    for (question_type, question_id) in questions {
+        println!(
+            "\n🔍 Processing question: {} ({})",
+            question_id, question_type
+        );
+
+        if !generate_images {
+            continue;
+        }
+
+        match fetch_question_content(&question_id).await {
+            Ok(content) => {
+                match render_question_to_image(&content, &question_type, true, output_dir).await {
+                    Ok(image_path) => {
+                        results.push((PathBuf::from(image_path), content, question_type));
+                    }
+                    Err(e) => {
+                        eprintln!("  ❌ Failed to generate image: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("  ❌ Failed to fetch question content: {}", e);
+            }
+        }
+    }
+
+    results
+}
+
+/// Send questions to specified users with retry logic
+async fn send_question_to_users(
+    zalo_bot: &ZaloBot,
+    users: &[String],
+    question_id: &str,
+    question_type: &QuestionType,
+    output_dir: &str,
+    github_config: &GitHubConfig,
+    show_explanations: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const MAX_RETRIES: usize = 3;
+    let mut last_error = None;
+
+    for attempt in 0..MAX_RETRIES {
+        match fetch_question_content(question_id).await {
+            Ok(content) => {
+                let mut all_successful = true;
+
+                for user_id in users {
+                    println!("📤 Sending question to user: {}", user_id);
+                    if let Err(e) = zalo_bot
+                        .send_question(
+                            user_id,
+                            &content,
+                            Some(question_type),
+                            output_dir,
+                            github_config,
+                            show_explanations,
+                        )
+                        .await
+                    {
+                        eprintln!("❌ Failed to send to user {}: {}", user_id, e);
+                        all_successful = false;
+                    } else {
+                        println!("✅ Successfully sent to user: {}", user_id);
+                    }
+                }
+
+                if !all_successful {
+                    return Err("Failed to send to some users".into());
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < MAX_RETRIES - 1 {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| "Unknown error".into()))
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "gmat-zalo-bot")]
@@ -40,10 +170,6 @@ struct Args {
     #[arg(long)]
     bot_token: Option<String>,
 
-    /// Custom caption for Zalo messages
-    #[arg(long, default_value = "Here's your GMAT question! 📚")]
-    caption: String,
-
     /// GitHub repository name (can also be set via GITHUB_REPOSITORY environment variable)
     #[arg(long)]
     github_repo: Option<String>,
@@ -67,183 +193,135 @@ struct Args {
     /// GitHub release tag name (used when creating new release)
     #[arg(long, default_value = "v1.0.0")]
     release_tag: String,
+
+    /// Send a daily question to a specific user (for use with GitHub Actions)
+    #[arg(long)]
+    daily_question: bool,
+
+    /// Comma-separated list of user IDs to send daily question to (required with --daily-question)
+    #[arg(long, value_delimiter = ',', default_value = "")]
+    user_ids: Vec<String>,
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     println!("🚀 GMAT Zalo Bot Starting...");
     println!("📡 Fetching GMAT database...");
 
-    let database = match fetch_gmat_database().await {
-        Ok(db) => db,
-        Err(e) => {
-            eprintln!("❌ Error fetching GMAT database: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let database = fetch_gmat_database().await?;
 
     if args.show_stats {
         show_database_stats(&database);
-        return;
+        return Ok(());
     }
 
-    let selected_questions = pick_random_questions(&database, &args.question_type, args.count);
-
-    if selected_questions.is_empty() {
-        println!("⚠️  No questions found matching your criteria.");
-        return;
-    }
-
-    println!(
-        "🎲 Selected {} Random Question{}:",
-        selected_questions.len(),
-        if selected_questions.len() > 1 {
-            "s"
-        } else {
-            ""
+    // Handle daily question command
+    if args.daily_question {
+        if args.user_ids.is_empty() {
+            return Err("At least one user ID is required when using --daily-question".into());
         }
-    );
-    println!(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    );
 
-    let mut generated_images = Vec::new();
+        let bot_token = args.bot_token.clone()
+            .or_else(|| env::var("ZALO_BOT_TOKEN").ok())
+            .ok_or("Zalo Bot token not found. Please set ZALO_BOT_TOKEN environment variable or use --bot-token")?;
 
-    for (i, (question_type, question_id)) in selected_questions.iter().enumerate() {
+        // Pick a random question
+        let selected_questions = pick_random_questions(&database, &args.question_type, 1);
+        if selected_questions.is_empty() {
+            return Err("No questions found matching your criteria.".into());
+        }
+
+        let (question_type, question_id) = &selected_questions[0];
         println!(
-            "\n{}. Question ID: {} ({})",
-            i + 1,
-            question_id,
-            question_type
+            "📝 Selected question for daily challenge: {} ({})",
+            question_id, question_type
         );
 
-        if args.generate_images || args.send_zalo {
-            match fetch_question_content(question_id).await {
-                Ok(content) => {
-                    // Display basic question info
-                    println!(
-                        "  📝 Question preview: {}",
-                        content.question.chars().take(100).collect::<String>()
-                            + if content.question.len() > 100 {
-                                "..."
-                            } else {
-                                ""
-                            }
-                    );
+        let github_config = GitHubConfig {
+            repo: String::new(),
+            release_id: 0,
+            token: String::new(),
+        };
 
-                    match render_question_to_image(&content, question_type, &args.output_dir).await
-                    {
-                        Ok(image_path) => {
-                            generated_images.push((image_path, content, question_type.clone()));
-                        }
-                        Err(e) => {
-                            eprintln!("  ❌ Failed to generate image: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("  ❌ Failed to fetch content: {}", e);
-                }
+        let zalo_bot = ZaloBot::new(bot_token);
+        send_question_to_users(
+            &zalo_bot,
+            &args.user_ids,
+            question_id,
+            question_type,
+            &args.output_dir,
+            &github_config,
+            false, // Don't show explanations for daily questions
+        )
+        .await?;
+
+        println!("✅ Successfully sent daily question to all users!");
+        return Ok(());
+    }
+
+    // Process questions and generate images if needed
+    let selected_questions = pick_random_questions(&database, &args.question_type, args.count);
+    if selected_questions.is_empty() {
+        return Err("No questions found matching your criteria.".into());
+    }
+
+    // Process images if needed (ignore result if we're not using it)
+    let _generated_images = if args.generate_images || args.send_zalo {
+        println!(
+            "🎲 Selected {} random question{}:",
+            selected_questions.len(),
+            if selected_questions.len() > 1 {
+                "s"
+            } else {
+                ""
+            }
+        );
+        println!("{}", "-".repeat(80));
+        let images = process_questions(
+            selected_questions.clone(),
+            &args.output_dir,
+            args.generate_images,
+        )
+        .await;
+
+        if !images.is_empty() {
+            println!(
+                "\n🖼️  Generated {} image{}:",
+                images.len(),
+                if images.len() > 1 { "s" } else { "" }
+            );
+            for (path, _, _) in &images {
+                println!("   📁 {}", path.display());
             }
         }
-    }
-
-    println!(
-        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    );
-
-    if args.generate_images && !generated_images.is_empty() {
-        println!(
-            "🖼️  Generated {} image{}:",
-            generated_images.len(),
-            if generated_images.len() > 1 { "s" } else { "" }
-        );
-        for (image_path, _, _) in &generated_images {
-            println!("   📁 {}", image_path);
-        }
-    }
+        println!("{}", "-".repeat(80));
+        images
+    } else {
+        Vec::new()
+    };
 
     // Handle Zalo bot operations
     if args.send_zalo || args.bot_service {
-        let bot_token = match args.bot_token.or_else(|| env::var("ZALO_BOT_TOKEN").ok()) {
-            Some(token) => token,
-            None => {
-                eprintln!(
-                    "❌ Bot token required. Set ZALO_BOT_TOKEN environment variable or use --bot-token"
-                );
-                eprintln!("💡 Example: export ZALO_BOT_TOKEN=your_bot_token_here");
-                std::process::exit(1);
-            }
-        };
+        let bot_token = args
+            .bot_token
+            .as_ref() // This gives you an Option<&String>
+            .cloned() // This converts Option<&String> to Option<String> by cloning
+            .or_else(|| env::var("ZALO_BOT_TOKEN").ok())
+            .ok_or(
+                "Bot token required. Set ZALO_BOT_TOKEN environment variable or use --bot-token",
+            )?;
 
-        let github_repo = args
-            .github_repo
-            .or_else(|| env::var("GITHUB_REPOSITORY").ok())
-            .unwrap_or_else(|| "gmat-bot-images".to_string());
-
-        let github_token = args
-            .github_token
-            .or_else(|| env::var("GITHUB_TOKEN").ok())
-            .unwrap_or_default();
-
-        if github_token.is_empty() {
-            eprintln!(
-                "❌ GitHub token required for image upload. Set GITHUB_TOKEN environment variable or use --github-token"
-            );
-            eprintln!("💡 Example: export GITHUB_TOKEN=your_github_token_here");
-            eprintln!("💡 Token needs 'repo' scope to upload release assets");
-            std::process::exit(1);
-        }
-
-        // Determine release ID
-        let release_id = if args.create_release {
-            println!("🏷️  Creating new GitHub release...");
-            match create_github_release(&github_repo, &github_token, &args.release_tag).await {
-                Ok(id) => {
-                    println!("✅ Created new release with ID: {}", id);
-                    id
-                }
-                Err(e) => {
-                    eprintln!("❌ Failed to create release: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        } else if args.use_latest_release {
-            println!("🔍 Getting latest release...");
-            match get_latest_release_id(&github_repo, &github_token).await {
-                Ok(id) => {
-                    println!("✅ Using latest release ID: {}", id);
-                    id
-                }
-                Err(e) => {
-                    eprintln!("❌ Failed to get latest release: {}", e);
-                    eprintln!("💡 Try using --create-release to create a new release");
-                    std::process::exit(1);
-                }
-            }
+        // Set up GitHub configuration if needed
+        let github_config = if args.send_zalo || args.bot_service {
+            setup_github_config(&args).await?
         } else {
-            args.github_release_id
-                .or_else(|| {
-                    env::var("GITHUB_RELEASE_ID")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                })
-                .unwrap_or_else(|| {
-                    eprintln!("❌ GitHub release ID required. Use one of:");
-                    eprintln!("  --github-release-id <ID>");
-                    eprintln!("  --use-latest-release");
-                    eprintln!("  --create-release");
-                    eprintln!("  export GITHUB_RELEASE_ID=<ID>");
-                    std::process::exit(1);
-                })
-        };
-
-        let github_config = GitHubConfig {
-            repo: github_repo,
-            release_id,
-            token: github_token,
+            GitHubConfig {
+                repo: String::new(),
+                release_id: 0,
+                token: String::new(),
+            }
         };
 
         println!("\n🤖 Initializing Zalo Bot...");
@@ -252,107 +330,88 @@ async fn main() {
         if args.bot_service {
             // Start continuous polling service
             println!("🚀 Starting bot service mode...");
-            if let Err(e) = zalo_bot
-                .start_polling_service(
-                    &database,
-                    &args.question_type,
-                    &args.output_dir,
-                    &args.caption,
-                    &github_config,
-                )
-                .await
-            {
-                eprintln!("❌ Bot service failed: {}", e);
-                std::process::exit(1);
-            }
+            zalo_bot
+                .start_polling_service(&database, &args.output_dir, &github_config)
+                .await?;
         } else if args.send_zalo {
             // One-time send to recent chats
-            if generated_images.is_empty() {
-                eprintln!("❌ No images to send. Use --generate-images with --send-zalo");
-                return;
+            if selected_questions.is_empty() {
+                return Err("No questions selected to send".into());
             }
 
             println!("📱 Getting recent messages...");
-            match zalo_bot.get_updates().await {
-                Ok(messages) => {
-                    if messages.is_empty() {
-                        println!(
-                            "⚠️  No recent messages found. Make sure users have sent messages to your bot recently."
-                        );
-                        return;
+            let messages = zalo_bot.get_updates().await?;
+
+            if messages.is_empty() {
+                return Err("No recent messages found. Make sure users have sent messages to your bot recently.".into());
+            }
+
+            let mut chat_ids: Vec<String> = messages.iter().map(|m| m.chat.id.clone()).collect();
+            chat_ids.sort();
+            chat_ids.dedup();
+
+            println!(
+                "📋 Found {} unique chat ID{}",
+                chat_ids.len(),
+                if chat_ids.len() > 1 { "s" } else { "" }
+            );
+
+            for (question_type, question_id) in selected_questions {
+                println!(
+                    "\n📤 Sending question {} ({})...",
+                    question_id, question_type
+                );
+
+                for chat_id in &chat_ids {
+                    if let Err(e) = send_question_to_users(
+                        &zalo_bot,
+                        &[chat_id.clone()],
+                        &question_id,
+                        &question_type,
+                        &args.output_dir,
+                        &github_config,
+                        true, // Show explanations for manual sends
+                    )
+                    .await
+                    {
+                        eprintln!("  ❌ Failed to send to chat {}: {}", chat_id, e);
+                    } else {
+                        println!("  ✅ Sent to chat: {}", chat_id);
                     }
-
-                    let mut chat_ids: Vec<String> =
-                        messages.iter().map(|m| m.chat.id.clone()).collect();
-                    chat_ids.sort();
-                    chat_ids.dedup();
-
-                    println!(
-                        "📋 Found {} unique chat ID{}",
-                        chat_ids.len(),
-                        if chat_ids.len() > 1 { "s" } else { "" }
-                    );
-
-                    for (image_path, content, question_type) in &generated_images {
-                        println!(
-                            "\n📤 Sending question {} ({})...",
-                            content.id, question_type
-                        );
-
-                        let caption = format!(
-                            "{}\n\nQuestion ID: {} ({})",
-                            args.caption, content.id, question_type
-                        );
-
-                        for chat_id in &chat_ids {
-                            match zalo_bot
-                                .send_photo_from_file(chat_id, image_path, &caption, &github_config)
-                                .await
-                            {
-                                Ok(()) => {
-                                    println!("  ✅ Sent to chat: {}", chat_id);
-                                }
-                                Err(e) => {
-                                    eprintln!("  ❌ Failed to send to chat {}: {}", chat_id, e);
-                                }
-                            }
-                        }
-                    }
-
-                    println!("\n🎉 Zalo sending completed!");
-                }
-                Err(e) => {
-                    eprintln!("❌ Failed to get messages: {}", e);
                 }
             }
+
+            println!("\n🎉 Zalo sending completed!");
         }
     }
 
-    println!("\n💡 Usage examples:");
-    println!("  # Start bot service (responds to each message automatically)");
-    println!("  cargo run -- --bot-service --question-type ps");
-    println!();
-    println!("  # Generate and send 3 PS questions to recent chats");
-    println!("  cargo run -- --question-type ps --count 3 --send-zalo");
-    println!();
-    println!("  # Generate images locally without sending");
-    println!("  cargo run -- --question-type ds --generate-images");
-    println!();
-    println!("  # Show database statistics");
-    println!("  cargo run -- --show-stats");
-    println!();
-    println!("  # Start service with custom caption");
-    println!("  cargo run -- --bot-service --caption \"Daily GMAT practice! 📚\"");
-    println!();
-    println!("🔧 Setup:");
-    println!("  export ZALO_BOT_TOKEN=your_bot_token_here");
-    println!("  export GITHUB_TOKEN=your_github_token_here  # Needs 'repo' scope");
-    println!("  export GITHUB_REPOSITORY=your_repo_name");
-    println!();
-    println!("📦 GitHub Release Options:");
-    println!("  cargo run -- --bot-service --create-release --release-tag v1.0.0");
-    println!("  cargo run -- --bot-service --use-latest-release");
-    println!("  cargo run -- --bot-service --github-release-id 123456");
-    println!();
-    println!("💡 The bot uploads question images to GitHub releases for hosting");
+    // Only show usage instructions if no action was taken
+    if !args.daily_question && !args.send_zalo && !args.bot_service && !args.show_stats {
+        println!("\n💡 Usage examples:");
+        println!("  # Start bot service (responds to each message automatically)");
+        println!("  cargo run -- --bot-service --question-type ps");
+        println!();
+        println!("  # Generate and send 3 PS questions to recent chats");
+        println!("  cargo run -- --question-type ps --count 3 --send-zalo");
+        println!();
+        println!("  # Generate images locally without sending");
+        println!("  cargo run -- --question-type ds --generate-images");
+        println!();
+        println!("  # Show database statistics");
+        println!("  cargo run -- --show-stats");
+        println!();
+        println!("🔧 Setup:");
+        println!("  export ZALO_BOT_TOKEN=your_bot_token_here");
+        println!("  export GITHUB_TOKEN=your_github_token_here  # Needs 'repo' scope");
+        println!("  export GITHUB_REPOSITORY=your_repo_name");
+        println!();
+        println!("📦 GitHub Release Options:");
+        println!("  cargo run -- --bot-service --create-release --release-tag v1.0.0");
+        println!("  cargo run -- --bot-service --use-latest-release");
+        println!("  cargo run -- --bot-service --github-release-id 123456");
+        println!();
+        println!("💡 The bot uploads question images to GitHub releases for hosting");
+    }
+
+    Ok(())
 }

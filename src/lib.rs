@@ -8,7 +8,7 @@ use std::process::Command;
 use tempfile::TempDir;
 
 const BOT_API_URL: &str = "https://bot-api.zapps.me";
-const LONG_POLLING_TIMEOUT: u64 = 6 * 60 * 60;
+const LONG_POLLING_TIMEOUT: u64 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
 pub enum QuestionType {
@@ -160,6 +160,78 @@ impl GmatDatabase {
 }
 
 impl ZaloBot {
+    /// Sends a question to the specified chat ID
+    ///
+    /// # Arguments
+    /// * `chat_id` - The chat ID to send the question to
+    /// * `content` - The question content to send
+    /// * `question_type` - Optional question type
+    /// * `output_dir` - Directory to store temporary files
+    /// * `github_config` - GitHub configuration for uploads
+    /// * `show_explanations` - Whether to include explanations in the question
+    pub async fn send_question(
+        &self,
+        chat_id: &str,
+        content: &QuestionContent,
+        question_type: Option<&QuestionType>,
+        output_dir: &str,
+        github_config: &GitHubConfig,
+        show_explanations: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Determine the question type (use provided or default to ProblemSolving)
+        let q_type = question_type.unwrap_or(&QuestionType::PS);
+
+        // Generate the question image
+        let image_path =
+            render_question_to_image(content, q_type, show_explanations, output_dir).await?;
+
+        // Upload to GitHub if configured
+        let image_url = if !github_config.token.is_empty() {
+            // Create a release if needed
+            let release_id =
+                match get_latest_release_id(&github_config.repo, &github_config.token).await {
+                    Ok(id) => id,
+                    Err(_) => {
+                        // If no release exists, create one
+                        create_github_release(&github_config.repo, &github_config.token, "v1.0.0")
+                            .await?
+                    }
+                };
+
+            // Upload the image
+            match upload_to_github_release(
+                &github_config.repo,
+                release_id,
+                &github_config.token,
+                &image_path,
+            )
+            .await
+            {
+                Ok(url) => Some(url),
+                Err(e) => {
+                    eprintln!("⚠️ Failed to upload to GitHub: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Send the photo using the GitHub URL if available, otherwise send the local file
+        if let Some(url) = image_url {
+            self.send_photo(chat_id, &url, "Here's your question!")
+                .await?;
+        } else {
+            self.send_photo_from_file(chat_id, &image_path, "Here's your question!", github_config)
+                .await?;
+            if let Err(e) = std::fs::remove_file(&image_path) {
+                eprintln!("⚠️ Failed to remove temporary file {}: {}", image_path, e);
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn new(bot_token: String) -> Self {
         Self {
             bot_token,
@@ -179,7 +251,6 @@ impl ZaloBot {
             .json(&serde_json::json!({
                 "timeout": LONG_POLLING_TIMEOUT,
             }))
-            .timeout(std::time::Duration::from_secs(LONG_POLLING_TIMEOUT + 5)) // 24 hours + 5 seconds
             .send()
             .await?;
 
@@ -269,9 +340,7 @@ impl ZaloBot {
     pub async fn start_polling_service(
         &self,
         database: &GmatDatabase,
-        question_type: &Option<QuestionType>,
         output_dir: &str,
-        caption: &str,
         github_config: &GitHubConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("🔄 Starting long polling service...");
@@ -297,9 +366,7 @@ impl ZaloBot {
                                     self.handle_message(
                                         &message,
                                         database,
-                                        question_type,
                                         output_dir,
-                                        caption,
                                         github_config,
                                     )
                                     .await;
@@ -313,7 +380,7 @@ impl ZaloBot {
 
                             // Check if it's a timeout (normal for long polling) or a real error
                             if e.to_string().contains("timeout") {
-                                println!("🔄 24-hour polling timeout, continuing...");
+                                println!("🔄 Polling timeout, continuing...");
                             } else {
                                 println!("🔄 Error occurred, retrying in 5 seconds...");
                                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -332,28 +399,62 @@ impl ZaloBot {
         &self,
         message: &ZaloMessage,
         database: &GmatDatabase,
-        question_type: &Option<QuestionType>,
         output_dir: &str,
-        caption: &str,
         github_config: &GitHubConfig,
     ) {
         let chat_id = &message.chat.id;
         let sender_id = &message.sender.id;
 
-        let message_text = message.text.as_deref().unwrap_or("").trim().to_lowercase();
+        let message_text = message.text.as_deref().unwrap_or("").trim();
 
         println!(
             "💬 Processing message '{}' from user: {} in chat: {}",
             message_text, sender_id, chat_id
         );
 
+        // Check if the message is a question ID (numeric)
+        if let Ok(question_id) = message_text.parse::<u32>() {
+            // User sent a direct question ID
+            println!("🔍 User requested question with ID: {}", question_id);
+
+            // Inform user that the bot is processing the request
+            if let Err(e) = self
+                .send_message(
+                    chat_id,
+                    &format!("⏳ Fetching question #{}...", question_id),
+                )
+                .await
+            {
+                eprintln!("❌ Failed to send processing message: {}", e);
+            }
+
+            // Try to fetch the specific question
+            match fetch_question_content(&question_id.to_string()).await {
+                Ok(content) => {
+                    // Generate and send the question image with explanations
+                    if let Err(e) = self
+                        .send_question(chat_id, &content, None, output_dir, github_config, true)
+                        .await
+                    {
+                        eprintln!("❌ Failed to send question: {}", e);
+                        let _ = self.send_message(chat_id, "❌ Failed to process the requested question. Please try again later.").await;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to fetch question: {}", e);
+                    let _ = self.send_message(chat_id, &format!("❌ Could not find a question with ID {}. Please check the ID and try again.", question_id)).await;
+                }
+            }
+            return;
+        }
+
         // Parse message to determine question type
-        let requested_type = match message_text.as_str() {
-            "rc" | "reading comprehension" => Some(QuestionType::RC),
-            "sc" | "sentence correction" => Some(QuestionType::SC),
-            "cr" | "critical reasoning" => Some(QuestionType::CR),
-            "ps" | "problem solving" => Some(QuestionType::PS),
-            "ds" | "data sufficiency" => Some(QuestionType::DS),
+        let requested_type = match message_text.to_lowercase().as_str() {
+            "rc" => Some(QuestionType::RC),
+            "sc" => Some(QuestionType::SC),
+            "cr" => Some(QuestionType::CR),
+            "ps" => Some(QuestionType::PS),
+            "ds" => Some(QuestionType::DS),
             _ => None,
         };
 
@@ -394,53 +495,39 @@ impl ZaloBot {
                 // Fetch question content
                 match fetch_question_content(question_id).await {
                     Ok(content) => {
-                        // Generate image
-                        match render_question_to_image(&content, selected_type, output_dir).await {
-                            Ok(image_path) => {
-                                // Upload to GitHub and send
-                                let full_caption = format!(
-                                    "{}\n\nQuestion ID: {} ({})\nFrom: {}",
-                                    caption, content.id, selected_type, content.src
+                        // Use send_question to handle the rest
+                        match self
+                            .send_question(
+                                chat_id,
+                                &content,
+                                Some(selected_type),
+                                output_dir,
+                                github_config,
+                                false, // Don't show explanations for random questions
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                println!(
+                                    "✅ Successfully sent {} question {} to user {}",
+                                    selected_type, question_id, sender_id
                                 );
-
-                                match self
-                                    .send_photo_from_file(
-                                        chat_id,
-                                        &image_path,
-                                        &full_caption,
-                                        github_config,
-                                    )
-                                    .await
-                                {
-                                    Ok(()) => {
-                                        println!(
-                                            "✅ Successfully sent {} question {} to user {}",
-                                            selected_type, question_id, sender_id
-                                        );
-                                        return;
-                                    }
-                                    Err(e) => {
-                                        eprintln!(
-                                            "❌ Failed to send photo to user {}: {}",
-                                            sender_id, e
-                                        );
-                                        last_error = Some(format!("Failed to send photo: {}", e));
-                                        break;
-                                    }
-                                }
+                                return;
                             }
                             Err(e) => {
                                 eprintln!(
-                                    "❌ Failed to generate image for question {}: {}",
-                                    question_id, e
+                                    "❌ Failed to send question to user {}: {}",
+                                    sender_id, e
                                 );
-                                last_error = Some(format!("Failed to generate image: {}", e));
+                                last_error = Some(format!("Failed to send question: {}", e));
                                 attempts += 1;
-                                println!(
-                                    "🔄 Retrying with another question (attempt {}/{})...",
-                                    attempts + 1,
-                                    max_attempts
-                                );
+                                if attempts < max_attempts {
+                                    println!(
+                                        "🔄 Retrying with another question (attempt {}/{})...",
+                                        attempts + 1,
+                                        max_attempts
+                                    );
+                                }
                                 continue;
                             }
                         }
@@ -556,6 +643,9 @@ impl ZaloBot {
             image_path,
         )
         .await?;
+        if let Err(e) = std::fs::remove_file(&image_path) {
+            eprintln!("⚠️ Failed to remove temporary file {}: {}", image_path, e);
+        }
         self.send_photo(chat_id, &github_url, caption).await
     }
 
@@ -669,9 +759,28 @@ pub fn pick_random_questions(
     results
 }
 
+/// Generates HTML content for a question without explanations
+pub fn generate_html_content_without_explanations(
+    content: &QuestionContent,
+    question_type: &QuestionType,
+) -> String {
+    generate_html_content_impl(content, question_type, false)
+}
+
+/// Generates HTML content for a question with optional explanations
 pub fn generate_html_content(content: &QuestionContent, question_type: &QuestionType) -> String {
+    generate_html_content_impl(content, question_type, true)
+}
+
+/// Internal implementation of HTML content generation
+fn generate_html_content_impl(
+    content: &QuestionContent,
+    question_type: &QuestionType,
+    show_explanations: bool,
+) -> String {
     let type_color = "#0068ff";
 
+    // Format answers with proper LaTeX delimiters
     let answers_html = if !content.answers.is_empty() {
         let options = content
             .answers
@@ -686,9 +795,14 @@ pub fn generate_html_content(content: &QuestionContent, question_type: &Question
                     4 => "E",
                     _ => &format!("{}", i + 1),
                 };
+                // Format answer text with proper LaTeX delimiters
+                let formatted_answer = answer
+                    .replace("$$", "$$") // Block math
+                    .replace("$", "$"); // Inline math
+
                 format!(
                     "<div class=\"answer-option\"><strong>{})</strong> {}</div>",
-                    label, answer
+                    label, formatted_answer
                 )
             })
             .collect::<Vec<_>>()
@@ -707,7 +821,8 @@ pub fn generate_html_content(content: &QuestionContent, question_type: &Question
         String::new()
     };
 
-    let explanations_html = if !content.explanations.is_empty() {
+    // Include explanations only if show_explanations is true
+    let explanations_html = if show_explanations && !content.explanations.is_empty() {
         let explanations = content
             .explanations
             .iter()
@@ -743,12 +858,13 @@ pub fn generate_html_content(content: &QuestionContent, question_type: &Question
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GMAT Question {}</title>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>
         window.MathJax = {{
             tex: {{
-                inlineMath: [['\\(', '\\)'], ['$', '$']],
-                displayMath: [['\\[', '\\]'], ['$$', '$$']]
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true,
+                processEnvironments: true,
             }},
             options: {{
                 processHtmlClass: 'tex2jax_process',
@@ -756,6 +872,7 @@ pub fn generate_html_content(content: &QuestionContent, question_type: &Question
             }}
         }};
     </script>
+    <script id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
         body {{
             font-family: Georgia, 'Times New Roman', Times, serif;
@@ -958,11 +1075,28 @@ pub fn check_wkhtmltoimage() -> Result<(), Box<dyn std::error::Error>> {
 pub async fn render_question_to_image(
     content: &QuestionContent,
     question_type: &QuestionType,
+    show_explanations: bool,
     output_dir: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    // Ensure the output directory exists
+    std::fs::create_dir_all(output_dir)?;
     check_wkhtmltoimage()?;
 
-    let html_content = generate_html_content(content, question_type);
+    // Generate HTML content with or without explanations
+    let html_content = if show_explanations {
+        generate_html_content(content, question_type)
+    } else {
+        generate_html_content_without_explanations(content, question_type)
+    };
+
+    // Write HTML to a temporary file for debugging if needed
+    #[cfg(debug_assertions)]
+    {
+        use std::fs::File;
+        use std::io::Write;
+        let mut file = File::create("debug_question.html")?;
+        file.write_all(html_content.as_bytes())?;
+    }
 
     // Create a temporary directory for the HTML file
     let temp_dir = TempDir::new()?;
