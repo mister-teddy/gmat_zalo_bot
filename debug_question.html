@@ -1,0 +1,240 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GMAT Question 127693</title>
+    <script>
+        // Set initial window status
+        window.status = 'loading';
+        
+        // Function to set ready status
+        function setReady() {
+            window.status = 'ready_to_print';
+            console.log('Page is ready for printing');
+        }
+        
+        // Configure MathJax
+        window.MathJax = {
+            startup: {
+                ready: function() {
+                    // When MathJax is ready, set the page as ready
+                    MathJax.startup.defaultReady().then(function() {
+                        console.log('MathJax rendering complete');
+                        setReady();
+                    });
+                }
+            }
+        };
+        
+        // Fallback in case MathJax fails to load
+        setTimeout(setReady, 3000);
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        body {
+            font-family: Georgia, 'Times New Roman', Times, serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 30px;
+            line-height: 1.6;
+            background-color: #ffffff;
+            color: #333;
+        }
+
+        .question-header {
+            background: #0068ff;
+            color: white;
+            padding: 25px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+
+        .question-id {
+            font-size: 1.1em;
+            font-weight: 600;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+
+        .question-type {
+            font-size: 1.8em;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .question-content {
+            background: white;
+            padding: 30px;
+            margin-bottom: 25px;
+        }
+
+        .question-text {
+            font-size: 1.2em;
+            line-height: 1.7;
+            margin-bottom: 25px;
+            color: #2c3e50;
+        }
+
+        .answers-section {
+            background: #f9f9f9;
+            padding: 25px;
+            margin-bottom: 25px;
+        }
+
+        .answers-section h3 {
+            color: #0068ff;
+            margin-top: 0;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+
+        .answer-option {
+            padding: 12px 15px;
+            margin: 8px 0;
+            background: white;
+            font-size: 1.1em;
+        }
+
+        .explanations-section {
+            background: white;
+            padding: 25px;
+        }
+
+        .explanations-section h3 {
+            color: #0068ff;
+            margin-top: 0;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+
+        .explanation {
+            margin-bottom: 25px;
+            padding: 20px;
+            background: #f9f9f9;
+        }
+
+        .explanation h4 {
+            color: #0068ff;
+            margin-top: 0;
+            margin-bottom: 15px;
+        }
+
+        .source-link {
+            margin-top: 30px;
+            padding: 15px;
+            background: #f9f9f9;
+            font-size: 0.9em;
+        }
+
+        .source-link a {
+            color: #0068ff;
+            text-decoration: none;
+        }
+
+        .source-link a:hover {
+            text-decoration: underline;
+        }
+
+        /* LaTeX Math styling */
+        .MathJax {
+            font-size: 1.1em !important;
+        }
+
+        /* Table styling for better readability */
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        th {
+            background-color: #f9f9f9;
+            font-weight: bold;
+        }
+
+        /* List styling */
+        ul, ol {
+            padding-left: 25px;
+        }
+
+        li {
+            margin: 8px 0;
+        }
+
+        /* Code blocks */
+        code {
+            background-color: #f9f9f9;
+            padding: 2px 6px;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* Emphasis */
+        strong {
+            color: #2c3e50;
+        }
+
+        em {
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <div class="question-header">
+        <div class="question-id">Question ID: 127693</div>
+        <h1 class="question-type">Sentence Correction</h1>
+    </div>
+
+    <div class="question-content">
+        <div class="question-text">
+            Oscar Charleston was <span style="text-decoration: underline">a hitter so feared that even when he came</span> to bat with the bases loaded he was routinely walked.<br><div class="spoiler"><div class="spoiler-top" onclick="return(spoilerToggle(this));"><a href="javascript:void(0)" class="spoiler-link">Show Spoiler</a><span class="spoiler-title"><span></span> <span class="icon-svg-play3"></span></span></div><div class="spoiler-box" onclick="spoilerToggle(this);"><div class="spoiler-hidden">I DO NOT understand this Q.<br>"Oscar Charleston was a hitter so feared" &lt;- who feared? OScar?<br>Th original sentence structure is so confusing to me, who is a non-native speaker.<br>Or maybe my English sucks.  <img src="https://cdn.gmatclub.com/cdn/files/forum/images/smilies/1f62d.png" class="forumSmileyItem" width="20" height="20" alt=":cry:" title="Crying or Very sad"></div></div></div>
+        </div>
+
+        
+        <div class="answers-section">
+            <h3>Answer Choices:</h3>
+            <div class="answer-option"><strong>A)</strong> a hitter so feared that even when he came</div>
+<div class="answer-option"><strong>B)</strong> the hitter so much feared that even when coming</div>
+<div class="answer-option"><strong>C)</strong> the hitter of such fearsomeness that even when he had come</div>
+<div class="answer-option"><strong>D)</strong> a hitter of such fearsomeness that even when he had come</div>
+<div class="answer-option"><strong>E)</strong> a hitter so much feared that even when coming</div>
+        </div>
+        
+
+        
+        <div class="explanations-section">
+            <h3>Explanations:</h3>
+            <div class="explanation"><h4>Explanation 1:</h4>(B) "the hitter" is OK, but possibly adds an unnecessary dimension by conveying that there was only one such hitter. Not a strong decision point, as it could be the case that there was only one such hitter.<br>"so much feared" is not a great way to express "so feared." He wasn't "so much feared." He was "so feared."<br>"when coming" does not make sense. A batter is walked once the batter is at bat. "when coming" seems to convey that this person was walked while still coming to bat.<br>(C) "the hitter" is OK, but possibly adds an unnecessary dimension by conveying that there was only one such hitter. Not a strong decision point, as it could be the case that there was only one such hitter.<br>"of such fearsomeness" does not as clearly as "so feared" connect his being walked to how others felt about him.<br>"had come" is not as good as "came" because the sentence is about something that occurred "routinely." "had come" would make more sense in a sentence about what occurred on one occasion when he "had come" to bat. This sentence is about what would happen when "he came to bat." This is an interesting subtle difference.<br>(D) "of such fearsomeness" does not as clearly as "so feared" connect his being walked to how others felt about him.<br>"had come" is not as good as "came" because the sentence is about something that occurred "routinely." "had come" would make more sense in a sentence about what occurred on one occasion when he "had come" to bat. This sentence is about what would happen when "he came to bat." This is an interesting subtle difference.<br>(E) "so much feared" is not a great way to express "so feared." He wasn't "so much feared." He was "so feared."<br>"when coming" does not make sense. A batter is walked once the batter is at bat. "when coming" seems to convey that this person was walked while still coming to bat.<br>The best choice is (A).</div>
+<div class="explanation"><h4>Explanation 2:</h4>A is correct<br>B: "when coming" implies that he was walked while he was coming out to bat.. which seems ridiculous. "so much feared" is also wrong (I'm sure someone else can explain why) . Also this option says "the hitter" thereby unnecessarily adding that he was the only such hitter... so wrong on 3 counts<br>C: "even when he had come" implies one specific instance in the past which obviously cannot go with the fact that he was "routinely" walked implying that this happened many times.. Also refers to Charleston as "the hitter" instead of "a hitter"<br>D: Again in this option "when he had come to bat" implies on incident in the past which does not go..<br>E: same as reasons for B minus the "the hitter" reason...<br>A by POE</div>
+<div class="explanation"><h4>Explanation 3:</h4>much can be used as adjective, adverb or noun..<br>Is it is used as adverb ---if yes than it is correct<br>But if used as adjective --- than wrong</div>
+<div class="explanation"><h4>Explanation 4:</h4>+1 A <br>So much is incorrect usage &amp; coming is incorrect as the action was performed in the past &amp; is not continuing in the present</div>
+<div class="explanation"><h4>Explanation 5:</h4>I answered A.<br>Here is the explanation :- <br>Meaning of the original sentence : O.C. was a great hitter ; he was feared by his rivals; he was so feared (by his rivals) that he was routinely walked, even when he came to bat.&gt;&gt; I visualize that the last statement means that the hitter is like a gladiator who walks around the arena before battle. Now until this point i am not sure of the structure , i do not like the passive voice. But i have to see if there is a better answer choice that is grammatically correct and that conveys the right meaning.<br>Option B -&gt; Wrong . A)So much feared is wordy; use of 'the' changes meaning. B)'that even when coming to bat' lacks subject.<br>Option C-&gt; Wrong. A) the hitter of such fearsomeness is not compact compared to 'so feared that' and the use of article 'the' changes the meaing B) Even when he had come to is incorrect use of tense , it changes the meaning of the sentence.<br>Option D-&gt; Wrong.  Same as option C.<br>Option E-&gt; Wrong.  A)So much feared is wordy; B)'that even when coming to bat' lacks subject.<br>Please point out . If you find anything wrong with my analysis.</div>
+<div class="explanation"><h4>Explanation 6:</h4>Oscar Charleston was a hitter so feared that even when he came to bat with the bases loaded he was routinely walked. <br><span style="color: #00a651">(A) a hitter so feared that even when he came</span><br><span style="color: #ed1c24">(B) the hitter so much feared that even when coming </span> run on sentence no action<br><span style="color: #ed1c24">(C) the hitter of such fearsomeness that even when he had come</span> wordy, prefer priority based on Verb&gt;Adjective&gt;noun<br><span style="color: #ed1c24">(D) a hitter of such fearsomeness that even when he had come </span>same issue as in C<br><span style="color: #ed1c24">(E) a hitter so much feared that even when coming</span> run on sentence no action, just describing OC.</div>
+<div class="explanation"><h4>Explanation 7:</h4><a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=GMATNinja" class="postlink"><span style="font-weight: bold">GMATNinja</span></a> <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=daagh" class="postlink"><span style="font-weight: bold">daagh</span></a> Please explain this one.</div>
+<div class="explanation"><h4>Explanation 8:</h4>Oscar Charleston was <span style="text-decoration: underline">a hitter so feared that even when he came</span> to bat with the bases loaded he was routinely walked. <br>(A) a hitter so feared that even when he came- Correct<br>(B) the hitter so much feared that even when coming- usage of 'the hitter' seems incorrect as we are not talking about a specific hitter<br>(C) the hitter of such fearsomeness that even when he had come - same as B, the usage of past perfect tense 'had come'<br>(D) a hitter of such fearsomeness that even when he had come -  the usage of past perfect tense 'had come', verb feared is better than adjective fearsomeness<br>(E) a hitter so much feared that even when coming- when coming does not tell us who did the action<br><a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=AjiteshArun" class="postlink"><span style="font-weight: bold">AjiteshArun</span></a> , <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=GMATNinja" class="postlink"><span style="font-weight: bold">GMATNinja</span></a> , <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=MagooshExpert" class="postlink"><span style="font-weight: bold">MagooshExpert</span></a> , <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=GMATGuruNY" class="postlink"><span style="font-weight: bold">GMATGuruNY</span></a> , <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=VeritasPrepBrian" class="postlink"><span style="font-weight: bold">VeritasPrepBrian</span></a> , <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=MartyTargetTestPrep" class="postlink"><span style="font-weight: bold">MartyTargetTestPrep</span></a> , <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=DmitryFarber" class="postlink"><span style="font-weight: bold">DmitryFarber</span></a> , <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=VeritasKarishma" class="postlink"><span style="font-weight: bold">VeritasKarishma</span></a> , <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=generis" class="postlink"><span style="font-weight: bold">generis</span></a> , <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=jennpt" class="postlink"><span style="font-weight: bold">jennpt</span></a> , other experts - please enlighten with the POE for this question</div>
+<div class="explanation"><h4>Explanation 9:</h4>Oscar Charleston was <span style="text-decoration: underline">a hitter so feared that even when he came</span> to bat with the bases loaded he was routinely walked.<br><span style="color: #2e3192">The sentence tests correct use of idiom So X that Y. Therefore, whatever tense is used after <span style="text-decoration: underline">So</span> has to be used after <span style="text-decoration: underline">that</span> as well. The non-underlined part clearly indicates that all actions happened in past.<br>Process of POE as per my understanding:<br></span><br>(A) a hitter so feared that even when he came <span style="color: #2e3192">(correct use of idiom +1, <span style="text-decoration: underline">feared and came</span> are both verbs, parallelism+1, best choice)</span> <br>(B) the hitter so much feared that even when coming <span style="color: #2e3192">(incorrect idiom, it is not So much X that Y. Feared and coming create incorrect tense forms, eliminate)</span><br>(C) the hitter of such fearsomeness that even when he had come <span style="color: #2e3192">(<span style="text-decoration: underline">fearsomeness </span>if at all a legitimate word is a noun, after that this choice presents a verb in <span style="text-decoration: underline">come</span>, incorrect, eliminate)</span><br>(D) a hitter of such fearsomeness that even when he had come <span style="color: #2e3192">(eliminate, same reasons as C)</span><br>(E) a hitter so much feared that even when coming <span style="color: #2e3192">(eliminate, same reason as B for tense forms)</span><br><span style="color: #2e3192">An interesting split to note is the presence of <span style="text-decoration: underline">A hitter</span> and <span style="text-decoration: underline">The hitter</span>. However, which one is correct, I am not sure.</span></div>
+<div class="explanation"><h4>Explanation 10:</h4>Is 'so much feared' the wrong idiom?</div>
+<div class="explanation"><h4>Explanation 11:</h4>Oscar Charleston was a hitter so feared that even when he came to bat with the bases loaded he was routinely walked. <br>(A) a hitter so feared that even when he came<br><span style="color: #00a651"> Correct.</span><br>(B) the hitter so much feared that even when coming <br>“So much feared” is incorrect.<br>I was so scared that I turned pale and not- “I was so much scared that I turned pale”<br>“So X that Y” is correct. <br>When was he routinely walked? When coming/while he was coming to bat or when he came to bat? The latter. <span style="color: #ed1c24">Eliminate B.</span><br>(C) the hitter of such fearsomeness that even when he had come <br> “the hitter of such fearsomeness” is awkward sentence construction. The use of past perfect tense is also incorrect- as this is something that routinely happened. <span style="color: #ed1c24">Eliminate C. </span><br>(D) a hitter of such fearsomeness that even when he had come <br>Same as C. <span style="color: #ed1c24">Eliminate D.</span><br>(E) a hitter so much feared that even when coming<br>When was he routinely walked? When coming/while he was coming to bat or when he came to bat? The latter. <span style="color: #ed1c24">Eliminate E</span></div>
+<div class="explanation"><h4>Explanation 12:</h4>" he came" gives a sense that we are talking about one particular instance. Am I right?</div>
+<div class="explanation"><h4>Explanation 13:</h4>It could be read in that way, but it can also be read as meaning all instances in which he came.</div>
+<div class="explanation"><h4>Explanation 14:</h4>Hello <a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=thakurarun85" class="postlink"><span style="font-weight: bold">thakurarun85</span></a>,<br>We hope this finds you well. <br>To answer your question, as MartyTargetTestPrep has written, "even when he came" can refer to both a single instance and describe a habitual or recurring action. In this context, the latter interpretation makes more sense.<br>We hope this helps.<br>All the best!<br><a href="http://www.expertsglobal.com/?source=GC_mention" class="th23autolinks" title="Look up details">Experts' Global</a> Team</div>
+<div class="explanation"><h4>Explanation 15:</h4>Ok. I will take this on face value. <br>Thanks for your contribution.</div>
+<div class="explanation"><h4>Explanation 16:</h4>Thanks Marty<br><a href="https://gmatclub.com:443/forum/memberlist.php?mode=viewprofile&amp;un=MartyTargetTestPrep" class="postlink"><span style="font-weight: bold">MartyTargetTestPrep</span></a></div>
+<div class="explanation"><h4>Explanation 17:</h4>Hello from the GMAT Club VerbalBot!<br>Thanks to another GMAT Club member, I have just discovered this valuable topic, yet it had no discussion for over a year. I am now bumping it up - doing my job. I think you may find it valuable (esp those replies with Kudos).<br>Want to see all other topics I dig out? Follow me (click follow button on profile). You will receive a summary of all topics I bump in your profile area as well as via email.</div>
+        </div>
+        
+    </div>
+
+    <div class="source-link">
+        <strong>Source:</strong> <a href="https://gmatclub.com/forum/oscar-charleston-was-a-hitter-so-feared-that-even-when-he-came-127693.html" target="_blank">https://gmatclub.com/forum/oscar-charleston-was-a-hitter-so-feared-that-even-when-he-came-127693.html</a>
+    </div>
+</body>
+</html>
+    

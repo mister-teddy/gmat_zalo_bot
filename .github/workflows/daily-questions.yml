@@ -55,4 +55,4 @@ jobs:
           fi
 
           echo "Sending question to users: $USER_IDS"
-          ./target/release/gmat_zalo_bot --use-latest-release --daily-question --user-ids "$USER_IDS"
+          ./target/release/gmat_zalo_bot --use-latest-release --user-ids "$USER_IDS"

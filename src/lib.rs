@@ -185,49 +185,8 @@ impl ZaloBot {
         let image_path =
             render_question_to_image(content, q_type, show_explanations, output_dir).await?;
 
-        // Upload to GitHub if configured
-        let image_url = if !github_config.token.is_empty() {
-            // Create a release if needed
-            let release_id =
-                match get_latest_release_id(&github_config.repo, &github_config.token).await {
-                    Ok(id) => id,
-                    Err(_) => {
-                        // If no release exists, create one
-                        create_github_release(&github_config.repo, &github_config.token, "v1.0.0")
-                            .await?
-                    }
-                };
-
-            // Upload the image
-            match upload_to_github_release(
-                &github_config.repo,
-                release_id,
-                &github_config.token,
-                &image_path,
-            )
-            .await
-            {
-                Ok(url) => Some(url),
-                Err(e) => {
-                    eprintln!("⚠️ Failed to upload to GitHub: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // Send the photo using the GitHub URL if available, otherwise send the local file
-        if let Some(url) = image_url {
-            self.send_photo(chat_id, &url, "Here's your question!")
-                .await?;
-        } else {
-            self.send_photo_from_file(chat_id, &image_path, "Here's your question!", github_config)
-                .await?;
-            if let Err(e) = std::fs::remove_file(&image_path) {
-                eprintln!("⚠️ Failed to remove temporary file {}: {}", image_path, e);
-            }
-        }
+        self.upload_and_send(chat_id, &image_path, "You can do it! 💪", github_config)
+            .await?;
 
         Ok(())
     }
@@ -433,7 +392,7 @@ impl ZaloBot {
                 Ok(content) => {
                     // Generate and send the question image with explanations
                     if let Err(e) = self
-                        .send_question(chat_id, &content, None, output_dir, github_config, true)
+                        .send_question(chat_id, &content, None, output_dir, github_config, true) // Always show explanations when the user requested for a specific question
                         .await
                     {
                         eprintln!("❌ Failed to send question: {}", e);
@@ -442,7 +401,7 @@ impl ZaloBot {
                 }
                 Err(e) => {
                     eprintln!("❌ Failed to fetch question: {}", e);
-                    let _ = self.send_message(chat_id, &format!("❌ Could not find a question with ID {}. Please check the ID and try again.", question_id)).await;
+                    let _ = self.send_message(chat_id, &format!("💁 We don't have the question #{} your are looking for. Please try another one.", question_id)).await;
                 }
             }
             return;
@@ -628,7 +587,7 @@ impl ZaloBot {
         }
     }
 
-    pub async fn send_photo_from_file(
+    pub async fn upload_and_send(
         &self,
         chat_id: &str,
         image_path: &str,
@@ -643,6 +602,7 @@ impl ZaloBot {
             image_path,
         )
         .await?;
+
         if let Err(e) = std::fs::remove_file(&image_path) {
             eprintln!("⚠️ Failed to remove temporary file {}: {}", image_path, e);
         }
@@ -859,20 +819,32 @@ fn generate_html_content_impl(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GMAT Question {}</title>
     <script>
+        // Set initial window status
+        window.status = 'loading';
+        
+        // Function to set ready status
+        function setReady() {{
+            window.status = 'ready_to_print';
+            console.log('Page is ready for printing');
+        }}
+        
+        // Configure MathJax
         window.MathJax = {{
-            tex: {{
-                inlineMath: [['$', '$'], ['\\(', '\\)']],
-                displayMath: [['$$', '$$'], ['\\[', '\\]']],
-                processEscapes: true,
-                processEnvironments: true,
-            }},
-            options: {{
-                processHtmlClass: 'tex2jax_process',
-                processEscapes: true
+            startup: {{
+                ready: function() {{
+                    // When MathJax is ready, set the page as ready
+                    MathJax.startup.defaultReady().then(function() {{
+                        console.log('MathJax rendering complete');
+                        setReady();
+                    }});
+                }}
             }}
         }};
+        
+        // Fallback in case MathJax fails to load
+        setTimeout(setReady, 3000);
     </script>
-    <script id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
         body {{
             font-family: Georgia, 'Times New Roman', Times, serif;
@@ -1034,7 +1006,7 @@ fn generate_html_content_impl(
     </div>
 
     <div class="question-content">
-        <div class="question-text tex2jax_process">
+        <div class="question-text">
             {}
         </div>
 
@@ -1113,7 +1085,7 @@ pub async fn render_question_to_image(
 
     println!("  🖼️  Rendering question to image...");
 
-    // Run wkhtmltoimage command
+    // Run wkhtmltoimage command with window status for better page load detection
     let output = Command::new("wkhtmltoimage")
         .arg("--format")
         .arg("jpg")
@@ -1122,6 +1094,9 @@ pub async fn render_question_to_image(
         .arg("--disable-smart-width")
         .arg("--quality")
         .arg("70")
+        .arg("--enable-javascript")
+        .arg("--window-status")
+        .arg("ready_to_print")
         .arg(html_path.to_str().unwrap())
         .arg(&output_path)
         .output()?;
