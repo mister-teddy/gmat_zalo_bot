@@ -1346,3 +1346,42 @@ pub async fn upload_to_github_release(
     );
     Ok(github_response.browser_download_url)
 }
+
+/// Send questions to specified users with retry logic
+pub async fn send_question_to_users(
+    zalo_bot: &ZaloBot,
+    users: &[String],
+    question_id: &str,
+    question_type: &QuestionType,
+    output_dir: &str,
+    github_config: &GitHubConfig,
+    show_explanations: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match fetch_question_content(question_id).await {
+        Ok(content) => {
+            for user_id in users {
+                println!("📤 Sending question to user: {}", user_id);
+                if let Err(e) = zalo_bot
+                    .send_question(
+                        user_id,
+                        &content,
+                        Some(question_type),
+                        output_dir,
+                        github_config,
+                        show_explanations,
+                    )
+                    .await
+                {
+                    eprintln!("❌ Failed to send to user {}: {}", user_id, e);
+                } else {
+                    println!("✅ Successfully sent to user: {}", user_id);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to fetch question content: {}", e);
+            return Err(e.into());
+        }
+    }
+    Ok(())
+}
