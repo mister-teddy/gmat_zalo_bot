@@ -2,8 +2,8 @@ name: Daily GMAT Questions
 
 on:
   schedule:
-    # Run every day at 9:00 AM
-    - cron: "0 2 * * *" # 9:00 AM UTC+7 is 2:00 AM UTC
+    # Run every day at 8:00 AM
+    - cron: "0 1 * * *" # 8:00 AM UTC+7 is 1:00 AM UTC
   workflow_dispatch: # Allow manual triggering
 
 env:
